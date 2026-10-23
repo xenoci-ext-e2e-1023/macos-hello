@@ -1,0 +1,31 @@
+name: macos-hello
+on:
+  workflow_dispatch:
+    inputs:
+      parallel:
+        description: "Run a second job at the same time"
+        type: boolean
+        default: false
+      hold_seconds:
+        description: "Seconds to keep each job running"
+        type: string
+        default: "0"
+jobs:
+  hello:
+    runs-on: xenoci-macos
+    steps:
+      - name: Hello
+        run: |
+          echo "hello from XenoCI"
+          sw_vers
+          xcodebuild -version
+          sleep "${{ inputs.hold_seconds }}"
+  hello-2:
+    if: ${{ inputs.parallel }}
+    runs-on: xenoci-macos
+    steps:
+      - name: Hello 2
+        run: |
+          echo "second job"
+          xcodebuild -version
+          sleep "${{ inputs.hold_seconds }}"
