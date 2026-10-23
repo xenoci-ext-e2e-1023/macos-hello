@@ -1,0 +1,56 @@
+name: func-e2e
+run-name: func-e2e-${{ github.run_id }}
+# func-e2e 2026-10-24: artifact upload/download and actions/cache save/restore across two XenoCI jobs.
+on:
+  workflow_dispatch:
+    inputs:
+      hold_seconds:
+        description: seconds to sleep in the first job
+        default: "0"
+permissions:
+  contents: read
+jobs:
+  produce:
+    runs-on: xenoci-macos
+    timeout-minutes: 10
+    steps:
+      - name: Make payload
+        run: |
+          mkdir -p out cachedir
+          printf 'func-e2e %s\n' "${{ github.run_id }}" > out/payload.txt
+          head -c 2097152 /dev/urandom > out/blob.bin
+          shasum -a 256 out/payload.txt out/blob.bin | tee out/SHA256SUMS
+          cp out/SHA256SUMS cachedir/SHA256SUMS
+          echo "XENOCI_RESULTS_URL_HOST=$(printf '%s' "$ACTIONS_RESULTS_URL" | sed -E 's#^(https?://[^/]+).*#\1#')"
+          sleep "${{ inputs.hold_seconds }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: func-e2e-payload
+          path: out/
+          retention-days: 1
+      - uses: actions/cache/save@v4
+        with:
+          path: cachedir
+          key: func-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+  consume:
+    needs: produce
+    runs-on: xenoci-macos
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: func-e2e-payload
+          path: got
+      - name: Verify artifact
+        run: |
+          cd got && shasum -a 256 -c SHA256SUMS && echo FUNC_E2E_ARTIFACT_OK
+      - uses: actions/cache/restore@v4
+        id: c
+        with:
+          path: cachedir
+          key: func-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          fail-on-cache-miss: true
+      - name: Verify cache
+        run: |
+          echo "cache-hit=${{ steps.c.outputs.cache-hit }}"
+          diff cachedir/SHA256SUMS got/SHA256SUMS && echo FUNC_E2E_CACHE_OK
