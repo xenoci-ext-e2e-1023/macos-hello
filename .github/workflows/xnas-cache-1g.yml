@@ -1,0 +1,74 @@
+name: XenoCI actions cache 1GB save and restore
+run-name: xnas-cache-1g-${{ github.run_id }}
+# Manual only (bs-cache 2026-10-20). Job 1 saves a 1 GiB random file with actions/cache, job 2 on a fresh VM restores it.
+on:
+  workflow_dispatch:
+    inputs:
+      size_mb:
+        description: cache size in MiB
+        default: '1024'
+      runner:
+        description: runs-on label (xenoci-macos or a GitHub-hosted label for comparison)
+        default: xenoci-macos
+      backend:
+        description: xenoci (our cache) or github (GitHub cache)
+        default: xenoci
+permissions:
+  contents: read
+concurrency:
+  group: xnas-cache-1g
+  cancel-in-progress: false
+jobs:
+  save:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    steps:
+      - name: Cache backend
+        run: |
+          # github: drop the XenoCI cache verdict so actions/cache keeps GitHub's own ACTIONS_RESULTS_URL
+          if [ "${{ inputs.backend }}" = github ]; then
+            for i in $(seq 1 15); do [ -f "$HOME/.xenoci-cache-probe.done" ] && break; sleep 1; done
+            rm -f "$HOME/.xenoci-results-url"
+          fi
+          echo "XENOCI_BACKEND=${{ inputs.backend }} verdict=$(cat "$HOME/.xenoci-results-url" 2>/dev/null || echo none)"
+      - name: Make random data
+        run: |
+          mkdir -p "$HOME/bscache"
+          dd if=/dev/urandom of="$HOME/bscache/blob.bin" bs=1m count=${{ inputs.size_mb }} 2>&1 | tail -1
+          shasum -a 256 "$HOME/bscache/blob.bin" | tee "$HOME/bscache/blob.sha256"
+          cat "$HOME/.xenoci-results-url" 2>/dev/null || echo "no XenoCI cache verdict"
+          date -u +XENOCI_SAVE_START=%s
+      - uses: actions/cache/save@v4
+        with:
+          path: ~/bscache
+          key: xnas-cache-${{ inputs.runner }}-${{ inputs.backend }}-${{ inputs.size_mb }}m-${{ github.run_id }}
+      - run: date -u +XENOCI_SAVE_END=%s
+  restore:
+    needs: save
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    steps:
+      - name: Cache backend
+        run: |
+          # github: drop the XenoCI cache verdict so actions/cache keeps GitHub's own ACTIONS_RESULTS_URL
+          if [ "${{ inputs.backend }}" = github ]; then
+            for i in $(seq 1 15); do [ -f "$HOME/.xenoci-cache-probe.done" ] && break; sleep 1; done
+            rm -f "$HOME/.xenoci-results-url"
+          fi
+          echo "XENOCI_BACKEND=${{ inputs.backend }} verdict=$(cat "$HOME/.xenoci-results-url" 2>/dev/null || echo none)"
+      - run: |
+          cat "$HOME/.xenoci-results-url" 2>/dev/null || echo "no XenoCI cache verdict"
+          date -u +XENOCI_RESTORE_START=%s
+      - id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/bscache
+          key: xnas-cache-${{ inputs.runner }}-${{ inputs.backend }}-${{ inputs.size_mb }}m-${{ github.run_id }}
+          fail-on-cache-miss: true
+      - name: Verify restored bytes
+        run: |
+          date -u +XENOCI_RESTORE_END=%s
+          echo "cache-hit=${{ steps.restore.outputs.cache-hit }}"
+          shasum -a 256 -c "$HOME/bscache/blob.sha256"
+          ls -l "$HOME/bscache/blob.bin"
+          echo XENOCI_CACHE_RESTORE_PASS
