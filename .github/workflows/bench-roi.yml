@@ -1,0 +1,98 @@
+name: bench-roi
+# IceCubesApp b2db303, Xcode 26.6, iOS Simulator Debug build. Same script as the XenoCI day-pass runs.
+# cold: no cache, 5 trials one at a time. warm: one priming run saves SwiftPM + DerivedData with
+# actions/cache, then 5 trials restore it (restore time is counted).
+on:
+  workflow_dispatch:
+    inputs:
+      runner: { description: runs-on label, required: true, default: xenoci-macos }
+      mode: { description: cold or warm, required: true, default: cold }
+      xcode: { description: Xcode version, required: true, default: '26.6' }
+jobs:
+  prime:
+    if: ${{ inputs.mode == 'warm' }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: bench script
+        run: |
+          cat > "$RUNNER_TEMP/bench.sh" <<'BENCH_EOF'
+          #!/bin/bash
+          # bench-roi: IceCubesApp b2db303 iOS Simulator Debug build, Xcode 26.6. Identical on GitHub-hosted and XenoCI.
+          # MODE=cold wipes package + DerivedData caches first; MODE=warm reuses them (second run).
+          set -euo pipefail
+          MODE=${MODE:-cold}; XC_VER=${XC_VER:-26.6}
+          t(){ perl -MTime::HiRes=time -e 'printf "%.3f", time'; }
+          d(){ perl -e "printf '%.1f', $2-$1"; }
+          echo "TIMING script_start $(t) mode=$MODE"
+          echo "HW $(sysctl -n hw.model) ncpu=$(sysctl -n hw.ncpu) mem=$(sysctl -n hw.memsize) macos=$(sw_vers -productVersion)"
+          XC=/Applications/Xcode_${XC_VER}.app
+          export DEVELOPER_DIR="$XC/Contents/Developer"; xcodebuild -version | tr '\n' ' '; echo
+          B=$HOME/bench-roi; mkdir -p "$B"
+          # cold = nothing reused: our SwiftPM/DerivedData dirs plus the global SwiftPM and Xcode caches a long-lived VM keeps.
+          if [ "$MODE" = cold ]; then rm -rf "$B/spm" "$B/dd" "$HOME/Library/Caches/org.swift.swiftpm" "$HOME/Library/org.swift.swiftpm" "$HOME/Library/Developer/Xcode/DerivedData"; fi
+          a=$(t); rm -rf "$B/src"; mkdir -p "$B/src"; cd "$B/src"
+          curl -fsSL -o src.tgz https://github.com/Dimillian/IceCubesApp/archive/b2db3033fbf67a97b54d25d6dac2df8a029b26b1.tar.gz; tar xzf src.tgz; rm src.tgz
+          b=$(t); echo "TIMING fetch_src $(d $a $b)"
+          cd "$B/src"/IceCubesApp-*; printf 'DEVELOPMENT_TEAM =\nBUNDLE_ID_PREFIX = im.cicd.bench\n' > IceCubesApp.xcconfig
+          F="CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO COMPILER_INDEX_STORE_ENABLE=NO"
+          a=$(t); xcodebuild -resolvePackageDependencies -scheme IceCubesApp -project IceCubesApp.xcodeproj -clonedSourcePackagesDirPath "$B/spm" -derivedDataPath "$B/dd" -scmProvider system -skipMacroValidation -skipPackagePluginValidation $F > "$B/resolve.log" 2>&1 || { tail -30 "$B/resolve.log"; exit 3; }
+          b=$(t); echo "TIMING spm_resolve $(d $a $b)"
+          a=$(t); set +e; xcodebuild build -scheme IceCubesApp -project IceCubesApp.xcodeproj -clonedSourcePackagesDirPath "$B/spm" -derivedDataPath "$B/dd" -destination 'generic/platform=iOS Simulator' -configuration Debug -disableAutomaticPackageResolution -scmProvider system -skipMacroValidation -skipPackagePluginValidation $F > "$B/build.log" 2>&1; rc=$?; set -e; b=$(t)
+          echo "TIMING app_build $(d $a $b) rc=$rc"; tail -3 "$B/build.log" || true
+          echo "TIMING script_end $(t)"
+          test $rc -eq 0
+
+          BENCH_EOF
+      - name: prime build (cold)
+        env: { MODE: cold, XC_VER: "${{ inputs.xcode }}" }
+        run: bash "$RUNNER_TEMP/bench.sh"
+      - uses: actions/cache/save@v4
+        with: { path: "~/bench-roi/spm\n~/bench-roi/dd", key: "bench-roi-${{ inputs.xcode }}-${{ github.run_id }}" }
+  trial:
+    needs: [prime]
+    if: ${{ always() && (inputs.mode == 'cold' || needs.prime.result == 'success') }}
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix: { trial: [1, 2, 3, 4, 5] }
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: cache restore
+        if: ${{ inputs.mode == 'warm' }}
+        uses: actions/cache/restore@v4
+        with: { path: "~/bench-roi/spm\n~/bench-roi/dd", key: "bench-roi-${{ inputs.xcode }}-${{ github.run_id }}", fail-on-cache-miss: true }
+      - name: bench script
+        run: |
+          cat > "$RUNNER_TEMP/bench.sh" <<'BENCH_EOF'
+          #!/bin/bash
+          # bench-roi: IceCubesApp b2db303 iOS Simulator Debug build, Xcode 26.6. Identical on GitHub-hosted and XenoCI.
+          # MODE=cold wipes package + DerivedData caches first; MODE=warm reuses them (second run).
+          set -euo pipefail
+          MODE=${MODE:-cold}; XC_VER=${XC_VER:-26.6}
+          t(){ perl -MTime::HiRes=time -e 'printf "%.3f", time'; }
+          d(){ perl -e "printf '%.1f', $2-$1"; }
+          echo "TIMING script_start $(t) mode=$MODE"
+          echo "HW $(sysctl -n hw.model) ncpu=$(sysctl -n hw.ncpu) mem=$(sysctl -n hw.memsize) macos=$(sw_vers -productVersion)"
+          XC=/Applications/Xcode_${XC_VER}.app
+          export DEVELOPER_DIR="$XC/Contents/Developer"; xcodebuild -version | tr '\n' ' '; echo
+          B=$HOME/bench-roi; mkdir -p "$B"
+          # cold = nothing reused: our SwiftPM/DerivedData dirs plus the global SwiftPM and Xcode caches a long-lived VM keeps.
+          if [ "$MODE" = cold ]; then rm -rf "$B/spm" "$B/dd" "$HOME/Library/Caches/org.swift.swiftpm" "$HOME/Library/org.swift.swiftpm" "$HOME/Library/Developer/Xcode/DerivedData"; fi
+          a=$(t); rm -rf "$B/src"; mkdir -p "$B/src"; cd "$B/src"
+          curl -fsSL -o src.tgz https://github.com/Dimillian/IceCubesApp/archive/b2db3033fbf67a97b54d25d6dac2df8a029b26b1.tar.gz; tar xzf src.tgz; rm src.tgz
+          b=$(t); echo "TIMING fetch_src $(d $a $b)"
+          cd "$B/src"/IceCubesApp-*; printf 'DEVELOPMENT_TEAM =\nBUNDLE_ID_PREFIX = im.cicd.bench\n' > IceCubesApp.xcconfig
+          F="CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO COMPILER_INDEX_STORE_ENABLE=NO"
+          a=$(t); xcodebuild -resolvePackageDependencies -scheme IceCubesApp -project IceCubesApp.xcodeproj -clonedSourcePackagesDirPath "$B/spm" -derivedDataPath "$B/dd" -scmProvider system -skipMacroValidation -skipPackagePluginValidation $F > "$B/resolve.log" 2>&1 || { tail -30 "$B/resolve.log"; exit 3; }
+          b=$(t); echo "TIMING spm_resolve $(d $a $b)"
+          a=$(t); set +e; xcodebuild build -scheme IceCubesApp -project IceCubesApp.xcodeproj -clonedSourcePackagesDirPath "$B/spm" -derivedDataPath "$B/dd" -destination 'generic/platform=iOS Simulator' -configuration Debug -disableAutomaticPackageResolution -scmProvider system -skipMacroValidation -skipPackagePluginValidation $F > "$B/build.log" 2>&1; rc=$?; set -e; b=$(t)
+          echo "TIMING app_build $(d $a $b) rc=$rc"; tail -3 "$B/build.log" || true
+          echo "TIMING script_end $(t)"
+          test $rc -eq 0
+
+          BENCH_EOF
+      - name: build IceCubesApp (${{ inputs.mode }})
+        env: { MODE: "${{ inputs.mode }}", XC_VER: "${{ inputs.xcode }}" }
+        run: bash "$RUNNER_TEMP/bench.sh"
