@@ -1,0 +1,32 @@
+name: qa2-fail
+run-name: qa2-fail-${{ github.run_id }}
+# qa-prod2-1024: failing jobs for failure-guidance checks (missing scheme, timeout, missing file).
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bad-scheme:
+    runs-on: xenoci-macos
+    timeout-minutes: 5
+    steps:
+      - name: Build missing scheme
+        run: |
+          mkdir -p empty && cd empty
+          xcodebuild -scheme QA2NoSuchScheme build
+  timeout:
+    runs-on: xenoci-macos
+    timeout-minutes: 1
+    steps:
+      - name: Sleep past timeout
+        run: |
+          echo QA2_TIMEOUT_START
+          sleep 150
+  missing-file:
+    runs-on: xenoci-macos
+    timeout-minutes: 5
+    steps:
+      - name: Read missing file
+        run: |
+          echo QA2_MISSING_START
+          cat ./does-not-exist/Podfile.lock
