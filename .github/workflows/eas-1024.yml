@@ -5,6 +5,9 @@ run-name: eas-1024-${{ github.run_id }}
 # warm: same steps after restoring ~/.npm, CocoaPods cache and ios/Pods saved by cold. noauth: eas build --local without EXPO_TOKEN.
 on:
   workflow_dispatch:
+    inputs:
+      warm: { type: boolean, default: true }
+      noauth: { type: boolean, default: true }
 permissions:
   contents: read
 env:
@@ -31,6 +34,7 @@ jobs:
             expo-bench/ios/Pods
           key: eas-1024-${{ github.run_id }}
   warm:
+    if: ${{ inputs.warm }}
     needs: cold
     runs-on: xenoci-macos
     timeout-minutes: 60
@@ -47,6 +51,7 @@ jobs:
         working-directory: expo-bench
         run: bash ../.github/eas-bench.sh warm
   noauth:
+    if: ${{ inputs.noauth }}
     runs-on: xenoci-macos
     timeout-minutes: 20
     steps:

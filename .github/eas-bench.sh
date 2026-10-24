@@ -12,7 +12,7 @@ a=$(t); npm ci --no-audit --no-fund > npm.log 2>&1 || { tail -40 npm.log; exit 3
 b=$(t); echo "TIMING npm_ci $(d $a $b)"
 a=$(t); npx expo prebuild --platform ios --no-install > prebuild.log 2>&1 || { tail -40 prebuild.log; exit 4; }
 b=$(t); echo "TIMING expo_prebuild $(d $a $b)"
-a=$(t); (cd ios && pod install) > pod.log 2>&1 || { tail -60 pod.log; exit 5; }
+a=$(t); (cd ios && pod install --verbose) > pod.log 2>&1 || { tail -60 pod.log; exit 5; }
 b=$(t); echo "TIMING pod_install $(d $a $b)"
 grep -E "Pod installation complete|Installing|Downloading" pod.log | tail -3 || true
 WS=$(ls -d ios/*.xcworkspace | head -1); SCHEME=$(basename "$WS" .xcworkspace)
@@ -24,6 +24,7 @@ b=$(t); echo "TIMING xcodebuild $(d $a $b)"
 tail -3 xcodebuild.log
 APP=$(ls -d build/dd/Build/Products/Release-iphonesimulator/*.app | head -1)
 test -f "$APP/main.jsbundle" && echo "JSBUNDLE_OK $(stat -f %z "$APP/main.jsbundle")" || echo "JSBUNDLE_MISSING"
+mkdir -p build/logs; cp npm.log prebuild.log pod.log xcodebuild.log build/logs/ 2>/dev/null || true
 tar -czf build/app-sim.tar.gz -C "$(dirname "$APP")" "$(basename "$APP")"; rm -rf build/dd
 echo "APP_TGZ $(stat -f %z build/app-sim.tar.gz)"
 echo "TIMING total $(d $S $(t))"
