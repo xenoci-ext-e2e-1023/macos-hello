@@ -1,0 +1,62 @@
+name: eas-1024
+run-name: eas-1024-${{ github.run_id }}
+# Expo official blank-typescript template (SDK 58, RN 0.88) in expo-bench/, no Expo account or token.
+# cold: npm ci + expo prebuild + pod install + xcodebuild (iOS Simulator, Release, like an EAS simulator profile).
+# warm: same steps after restoring ~/.npm, CocoaPods cache and ios/Pods saved by cold. noauth: eas build --local without EXPO_TOKEN.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+  EXPO_NO_TELEMETRY: '1'
+jobs:
+  cold:
+    runs-on: xenoci-macos
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: bench
+        working-directory: expo-bench
+        run: bash ../.github/eas-bench.sh cold
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-sim-cold
+          path: expo-bench/build/
+      - uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.npm
+            ~/Library/Caches/CocoaPods
+            expo-bench/ios/Pods
+          key: eas-1024-${{ github.run_id }}
+  warm:
+    needs: cold
+    runs-on: xenoci-macos
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.npm
+            ~/Library/Caches/CocoaPods
+            expo-bench/ios/Pods
+          key: eas-1024-${{ github.run_id }}
+      - name: bench
+        working-directory: expo-bench
+        run: bash ../.github/eas-bench.sh warm
+  noauth:
+    runs-on: xenoci-macos
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: eas build --local without EXPO_TOKEN
+        working-directory: expo-bench
+        run: |
+          set -o pipefail
+          node -v; npm -v
+          npm ci --no-audit --no-fund
+          set +e
+          npx --yes eas-cli@25.3.0 build --local --platform ios --profile preview --non-interactive --output build/app.tar.gz 2>&1 | tail -60
+          echo "EAS_LOCAL_NOAUTH_RC=${PIPESTATUS[0]}"
