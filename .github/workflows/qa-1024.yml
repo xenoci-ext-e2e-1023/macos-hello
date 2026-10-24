@@ -1,0 +1,94 @@
+name: qa-1024
+run-name: qa-1024-${{ github.run_id }}
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [alpha, beta, gamma]
+    runs-on: xenoci-macos
+    timeout-minutes: 5
+    steps:
+      - name: Leg ${{ matrix.leg }}
+        run: |
+          echo "QA_MATRIX_LEG=${{ matrix.leg }}"
+          if [ "${{ matrix.leg }}" = gamma ]; then echo "QA_MATRIX_EXPECTED_FAIL"; exit 3; fi
+  longlog:
+    runs-on: xenoci-macos
+    timeout-minutes: 5
+    steps:
+      - name: Emit 60000 lines
+        run: |
+          echo "::group::colored block"
+          printf '\033[31mQA_RED\033[0m \033[32mQA_GREEN\033[0m 한글 줄\n'
+          echo "::endgroup::"
+          i=1; while [ $i -le 60000 ]; do echo "QA_LONGLOG_LINE $i abcdefghijklmnopqrstuvwxyz0123456789"; i=$((i+1)); done
+          echo "QA_LONGLOG_LAST_LINE_60000"
+  produce:
+    runs-on: xenoci-macos
+    timeout-minutes: 5
+    steps:
+      - name: Make payload
+        run: |
+          mkdir -p out && head -c 3000000 /dev/urandom > out/blob.bin
+          (cd out && shasum -a 256 blob.bin > blob.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qa-blob
+          path: out/
+      - uses: actions/cache/save@v4
+        with:
+          path: out
+          key: qa-1024-${{ github.run_id }}-${{ github.run_attempt }}
+  consume:
+    needs: produce
+    runs-on: xenoci-macos
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: qa-blob
+          path: got
+      - name: Verify artifact
+        run: cd got && shasum -a 256 -c blob.sha256 && echo QA_ARTIFACT_OK
+      - id: c
+        uses: actions/cache/restore@v4
+        with:
+          path: out
+          key: qa-1024-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Verify cache
+        run: |
+          test "${{ steps.c.outputs.cache-hit }}" = true
+          cmp out/blob.bin got/blob.bin && echo QA_CACHE_OK
+  sticky1:
+    needs: consume
+    runs-on: xenoci-macos
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./integrations/stickydisk
+        with:
+          key: qa-1024-sticky
+          path: ${{ runner.temp }}/qa-sticky
+      - name: Write marker
+        run: |
+          PREV=$(cat "${{ runner.temp }}/qa-sticky/marker.txt" 2>/dev/null || echo none)
+          echo "QA_STICKY_PREV=$PREV"
+          echo "qa-${{ github.run_id }}-${{ github.run_attempt }}" > "${{ runner.temp }}/qa-sticky/marker.txt"
+  sticky2:
+    needs: sticky1
+    runs-on: xenoci-macos
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./integrations/stickydisk
+        with:
+          key: qa-1024-sticky
+          path: ${{ runner.temp }}/qa-sticky
+      - name: Read marker
+        run: |
+          test "$(cat "${{ runner.temp }}/qa-sticky/marker.txt")" = "qa-${{ github.run_id }}-${{ github.run_attempt }}" && echo QA_STICKY_OK
