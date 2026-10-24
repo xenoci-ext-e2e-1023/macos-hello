@@ -1,0 +1,34 @@
+name: eas-1024-starter
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: xenoci-macos
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      EXPO_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+      # test repo only: the Expo app lives in expo-bench/, the starter expects it at the root
+      - run: cp -R expo-bench/. . && rm -rf expo-bench
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/CocoaPods
+            ~/Library/Caches/ReactNative
+            ios/Pods
+          key: ${{ runner.os }}-deps-${{ hashFiles('package-lock.json', 'app.json', 'app.config.*') }}
+      - run: npm ci
+      - run: npx expo prebuild --platform ios --no-install
+      - run: cd ios && pod install
+      - run: |
+          ws=$(ls -d ios/*.xcworkspace | head -1)
+          xcodebuild build -workspace "$ws" -scheme "$(basename "$ws" .xcworkspace)" -configuration Release -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO
+          app=$(ls -d build/dd/Build/Products/Release-iphonesimulator/*.app | head -1)
+          tar -czf build/app-ios-simulator.tar.gz -C "$(dirname "$app")" "$(basename "$app")"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-ios-simulator
+          path: build/app-ios-simulator.tar.gz
